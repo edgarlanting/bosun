@@ -285,225 +285,6 @@ bosunControllers.controller('ActionCtrl', ['$scope', '$http', '$location', '$rou
         });
     };
 }]);
-bosunControllers.controller('ConfigCtrl', ['$scope', '$http', '$location', '$route', '$timeout', '$sce', function ($scope, $http, $location, $route, $timeout, $sce) {
-    var search = $location.search();
-    $scope.fromDate = search.fromDate || '';
-    $scope.fromTime = search.fromTime || '';
-    $scope.toDate = search.toDate || '';
-    $scope.toTime = search.toTime || '';
-    $scope.intervals = +search.intervals || 5;
-    $scope.duration = +search.duration || null;
-    $scope.config_text = 'Loading config...';
-    $scope.selected_alert = search.alert || '';
-    $scope.email = search.email || '';
-    $scope.template_group = search.template_group || '';
-    $scope.items = parseItems();
-    $scope.tab = search.tab || 'results';
-    var textElem = $("#configText");
-    $timeout(function () {
-        textElem.linedtextarea();
-    });
-    var expr = search.expr;
-    function buildAlertFromExpr() {
-        if (!expr)
-            return;
-        var newAlertName = "test";
-        var idx = 1;
-        while ($scope.items["alert"].indexOf(newAlertName) != -1 || $scope.items["template"].indexOf(newAlertName) != -1) {
-            newAlertName = "test" + idx;
-            idx++;
-        }
-        var text = '\n\ntemplate ' + newAlertName + ' {\n' + '	subject = {{.Last.Status}}: {{.Alert.Name}} on {{.Group.host}}\n' + '	body = `<p>Name: {{.Alert.Name}}\n' + '	<p>Tags:\n' + '	<table>\n' + '		{{range $k, $v := .Group}}\n' + '			<tr><td>{{$k}}</td><td>{{$v}}</td></tr>\n' + '		{{end}}\n' + '	</table>`\n' + '}\n\n';
-        text += 'alert ' + newAlertName + ' {\n' + '	template = ' + newAlertName + '\n' + '	crit = ' + atob(expr) + '\n' + '}\n';
-        $scope.config_text += text;
-        $scope.items = parseItems();
-        $timeout(function () {
-            //can't scroll editor until after control is updated. Defer it.
-            $scope.scrollTo("alert", newAlertName);
-        });
-    }
-    function parseItems() {
-        var configText = $scope.config_text;
-        var re = /^\s*(alert|template|notification|lookup|macro)\s+([\w\-\.\$]+)\s*\{/gm;
-        var match;
-        var items = {};
-        items["alert"] = [];
-        items["template"] = [];
-        items["lookup"] = [];
-        items["notification"] = [];
-        items["macro"] = [];
-        while (match = re.exec(configText)) {
-            var type = match[1];
-            var name = match[2];
-            var list = items[type];
-            if (!list) {
-                list = [];
-                items[type] = list;
-            }
-            list.push(name);
-        }
-        return items;
-    }
-    $http.get('/api/config').success(function (data) {
-        $scope.config_text = data;
-        $scope.items = parseItems();
-        buildAlertFromExpr();
-        if (!$scope.selected_alert && $scope.items["alert"].length) {
-            $scope.selected_alert = $scope.items["alert"][0];
-        }
-        $timeout(function () {
-            //can't scroll editor until after control is updated. Defer it.
-            $scope.scrollTo("alert", $scope.selected_alert);
-        });
-    }).error(function (data) {
-        $scope.validationResult = "Error fetching config: " + data;
-    });
-    $scope.reparse = function () {
-        $scope.items = parseItems();
-    };
-    function scrollToLine(line, elem) {
-        $("#wrap").find('.lineerror').removeClass('lineerror');
-        var lineHeight = textElem[0].scrollHeight / (elem[0].value.match(/\n/g).length + 1);
-        var jump = (line - 5) * lineHeight;
-        elem.scrollTop(jump);
-        elem.scroll();
-        $("#wrap").find('.lines div').eq(line - 1).addClass('lineerror');
-    }
-    $scope.scrollTo = function (type, name) {
-        var searchRegex = new RegExp("^\\s*" + type + "\\s+" + name + "\\s*\\{", "g");
-        var lines = $scope.config_text.split("\n");
-        for (var i = 0; i < lines.length; i++) {
-            if (lines[i].match(searchRegex)) {
-                scrollToLine(i + 1, textElem);
-                break;
-            }
-        }
-        if (type == "alert") {
-            $scope.selectAlert(name);
-        }
-    };
-    $scope.scrollToInterval = function (id) {
-        document.getElementById('time-' + id).scrollIntoView();
-        $scope.show($scope.sets[id]);
-    };
-    $scope.show = function (set) {
-        set.show = 'loading...';
-        $scope.animate();
-        var url = '/api/rule?' + 'alert=' + encodeURIComponent($scope.selected_alert) + '&from=' + encodeURIComponent(set.Time);
-        $http.post(url, $scope.config_text).success(function (data) {
-            procResults(data);
-            set.Results = data.Sets[0].Results;
-        }).error(function (error) {
-            $scope.error = error;
-        }).finally(function () {
-            $scope.stop();
-            delete (set.show);
-        });
-    };
-    $scope.setInterval = function () {
-        var from = moment.utc($scope.fromDate + ' ' + $scope.fromTime);
-        var to = moment.utc($scope.toDate + ' ' + $scope.toTime);
-        if (!from.isValid() || !to.isValid()) {
-            return;
-        }
-        var diff = from.diff(to);
-        if (!diff) {
-            return;
-        }
-        var intervals = +$scope.intervals;
-        if (intervals < 2) {
-            return;
-        }
-        diff /= 1000 * 60;
-        var d = Math.abs(Math.round(diff / intervals));
-        if (d < 1) {
-            d = 1;
-        }
-        $scope.duration = d;
-    };
-    $scope.selectAlert = function (alert) {
-        $scope.selected_alert = alert;
-        $location.search("alert", alert);
-    };
-    var line_re = /test:(\d+)/;
-    $scope.validate = function () {
-        $http.get('/api/config_test?config_text=' + encodeURIComponent($scope.config_text)).success(function (data) {
-            if (data == "") {
-                $scope.validationResult = "Valid";
-                $timeout(function () {
-                    $scope.validationResult = "";
-                }, 2000);
-            }
-            else {
-                $scope.validationResult = data;
-                var m = data.match(line_re);
-                if (angular.isArray(m) && (m.length > 1)) {
-                    scrollToLine(m[1], textElem);
-                }
-            }
-        }).error(function (error) {
-            $scope.validationResult = 'Error validating: ' + error;
-        });
-    };
-    $scope.test = function () {
-        $scope.error = '';
-        $scope.running = true;
-        $scope.warning = [];
-        $location.search('fromDate', $scope.fromDate || null);
-        $location.search('fromTime', $scope.fromTime || null);
-        $location.search('toDate', $scope.toDate || null);
-        $location.search('toTime', $scope.toTime || null);
-        $location.search('intervals', String($scope.intervals) || null);
-        $location.search('duration', String($scope.duration) || null);
-        $location.search('email', $scope.email || null);
-        $location.search('template_group', $scope.template_group || null);
-        $scope.animate();
-        var from = moment.utc($scope.fromDate + ' ' + $scope.fromTime);
-        var to = moment.utc($scope.toDate + ' ' + $scope.toTime);
-        if (!from.isValid()) {
-            from = to;
-        }
-        if (!to.isValid()) {
-            to = from;
-        }
-        if (!from.isValid() && !to.isValid()) {
-            from = to = moment.utc();
-        }
-        var diff = from.diff(to);
-        var intervals;
-        if (diff == 0) {
-            intervals = 1;
-        }
-        else if (Math.abs(diff) < 60 * 1000) {
-            intervals = 2;
-        }
-        else {
-            intervals = +$scope.intervals;
-        }
-        var url = '/api/rule?' + 'alert=' + encodeURIComponent($scope.selected_alert) + '&from=' + encodeURIComponent(from.format()) + '&to=' + encodeURIComponent(to.format()) + '&intervals=' + encodeURIComponent(intervals) + '&email=' + encodeURIComponent($scope.email) + '&template_group=' + encodeURIComponent($scope.template_group);
-        $http.post(url, $scope.config_text).success(function (data) {
-            $scope.sets = data.Sets;
-            $scope.alert_history = data.AlertHistory;
-            procResults(data);
-        }).error(function (error) {
-            $scope.error = error;
-        }).finally(function () {
-            $scope.running = false;
-            $scope.stop();
-        });
-    };
-    $scope.zws = function (v) {
-        return v.replace(/([,{}()])/g, '$1\u200b');
-    };
-    function procResults(data) {
-        $scope.subject = data.Subject;
-        $scope.body = $sce.trustAsHtml(data.Body);
-        $scope.data = JSON.stringify(data.Data, null, '  ');
-        $scope.error = data.Errors;
-        $scope.warning = data.Warnings;
-    }
-    return $scope;
-}]);
 bosunControllers.controller('DashboardCtrl', ['$scope', '$http', '$location', function ($scope, $http, $location) {
     var search = $location.search();
     $scope.loading = 'Loading';
@@ -1897,6 +1678,225 @@ bosunControllers.controller('PutCtrl', ['$scope', '$http', '$route', function ($
             $scope.error = 'Unable to fetch metrics: ' + error;
         });
     };
+}]);
+bosunControllers.controller('ConfigCtrl', ['$scope', '$http', '$location', '$route', '$timeout', '$sce', function ($scope, $http, $location, $route, $timeout, $sce) {
+    var search = $location.search();
+    $scope.fromDate = search.fromDate || '';
+    $scope.fromTime = search.fromTime || '';
+    $scope.toDate = search.toDate || '';
+    $scope.toTime = search.toTime || '';
+    $scope.intervals = +search.intervals || 5;
+    $scope.duration = +search.duration || null;
+    $scope.config_text = 'Loading config...';
+    $scope.selected_alert = search.alert || '';
+    $scope.email = search.email || '';
+    $scope.template_group = search.template_group || '';
+    $scope.items = parseItems();
+    $scope.tab = search.tab || 'results';
+    var textElem = $("#configText");
+    $timeout(function () {
+        textElem.linedtextarea();
+    });
+    var expr = search.expr;
+    function buildAlertFromExpr() {
+        if (!expr)
+            return;
+        var newAlertName = "test";
+        var idx = 1;
+        while ($scope.items["alert"].indexOf(newAlertName) != -1 || $scope.items["template"].indexOf(newAlertName) != -1) {
+            newAlertName = "test" + idx;
+            idx++;
+        }
+        var text = '\n\ntemplate ' + newAlertName + ' {\n' + '	subject = {{.Last.Status}}: {{.Alert.Name}} on {{.Group.host}}\n' + '	body = `<p>Name: {{.Alert.Name}}\n' + '	<p>Tags:\n' + '	<table>\n' + '		{{range $k, $v := .Group}}\n' + '			<tr><td>{{$k}}</td><td>{{$v}}</td></tr>\n' + '		{{end}}\n' + '	</table>`\n' + '}\n\n';
+        text += 'alert ' + newAlertName + ' {\n' + '	template = ' + newAlertName + '\n' + '	crit = ' + atob(expr) + '\n' + '}\n';
+        $scope.config_text += text;
+        $scope.items = parseItems();
+        $timeout(function () {
+            //can't scroll editor until after control is updated. Defer it.
+            $scope.scrollTo("alert", newAlertName);
+        });
+    }
+    function parseItems() {
+        var configText = $scope.config_text;
+        var re = /^\s*(alert|template|notification|lookup|macro)\s+([\w\-\.\$]+)\s*\{/gm;
+        var match;
+        var items = {};
+        items["alert"] = [];
+        items["template"] = [];
+        items["lookup"] = [];
+        items["notification"] = [];
+        items["macro"] = [];
+        while (match = re.exec(configText)) {
+            var type = match[1];
+            var name = match[2];
+            var list = items[type];
+            if (!list) {
+                list = [];
+                items[type] = list;
+            }
+            list.push(name);
+        }
+        return items;
+    }
+    $http.get('/api/config').success(function (data) {
+        $scope.config_text = data;
+        $scope.items = parseItems();
+        buildAlertFromExpr();
+        if (!$scope.selected_alert && $scope.items["alert"].length) {
+            $scope.selected_alert = $scope.items["alert"][0];
+        }
+        $timeout(function () {
+            //can't scroll editor until after control is updated. Defer it.
+            $scope.scrollTo("alert", $scope.selected_alert);
+        });
+    }).error(function (data) {
+        $scope.validationResult = "Error fetching config: " + data;
+    });
+    $scope.reparse = function () {
+        $scope.items = parseItems();
+    };
+    function scrollToLine(line, elem) {
+        $("#wrap").find('.lineerror').removeClass('lineerror');
+        var lineHeight = textElem[0].scrollHeight / (elem[0].value.match(/\n/g).length + 1);
+        var jump = (line - 5) * lineHeight;
+        elem.scrollTop(jump);
+        elem.scroll();
+        $("#wrap").find('.lines div').eq(line - 1).addClass('lineerror');
+    }
+    $scope.scrollTo = function (type, name) {
+        var searchRegex = new RegExp("^\\s*" + type + "\\s+" + name + "\\s*\\{", "g");
+        var lines = $scope.config_text.split("\n");
+        for (var i = 0; i < lines.length; i++) {
+            if (lines[i].match(searchRegex)) {
+                scrollToLine(i + 1, textElem);
+                break;
+            }
+        }
+        if (type == "alert") {
+            $scope.selectAlert(name);
+        }
+    };
+    $scope.scrollToInterval = function (id) {
+        document.getElementById('time-' + id).scrollIntoView();
+        $scope.show($scope.sets[id]);
+    };
+    $scope.show = function (set) {
+        set.show = 'loading...';
+        $scope.animate();
+        var url = '/api/rule?' + 'alert=' + encodeURIComponent($scope.selected_alert) + '&from=' + encodeURIComponent(set.Time);
+        $http.post(url, $scope.config_text).success(function (data) {
+            procResults(data);
+            set.Results = data.Sets[0].Results;
+        }).error(function (error) {
+            $scope.error = error;
+        }).finally(function () {
+            $scope.stop();
+            delete (set.show);
+        });
+    };
+    $scope.setInterval = function () {
+        var from = moment.utc($scope.fromDate + ' ' + $scope.fromTime);
+        var to = moment.utc($scope.toDate + ' ' + $scope.toTime);
+        if (!from.isValid() || !to.isValid()) {
+            return;
+        }
+        var diff = from.diff(to);
+        if (!diff) {
+            return;
+        }
+        var intervals = +$scope.intervals;
+        if (intervals < 2) {
+            return;
+        }
+        diff /= 1000 * 60;
+        var d = Math.abs(Math.round(diff / intervals));
+        if (d < 1) {
+            d = 1;
+        }
+        $scope.duration = d;
+    };
+    $scope.selectAlert = function (alert) {
+        $scope.selected_alert = alert;
+        $location.search("alert", alert);
+    };
+    var line_re = /test:(\d+)/;
+    $scope.validate = function () {
+        $http.get('/api/config_test?config_text=' + encodeURIComponent($scope.config_text)).success(function (data) {
+            if (data == "") {
+                $scope.validationResult = "Valid";
+                $timeout(function () {
+                    $scope.validationResult = "";
+                }, 2000);
+            }
+            else {
+                $scope.validationResult = data;
+                var m = data.match(line_re);
+                if (angular.isArray(m) && (m.length > 1)) {
+                    scrollToLine(m[1], textElem);
+                }
+            }
+        }).error(function (error) {
+            $scope.validationResult = 'Error validating: ' + error;
+        });
+    };
+    $scope.test = function () {
+        $scope.error = '';
+        $scope.running = true;
+        $scope.warning = [];
+        $location.search('fromDate', $scope.fromDate || null);
+        $location.search('fromTime', $scope.fromTime || null);
+        $location.search('toDate', $scope.toDate || null);
+        $location.search('toTime', $scope.toTime || null);
+        $location.search('intervals', String($scope.intervals) || null);
+        $location.search('duration', String($scope.duration) || null);
+        $location.search('email', $scope.email || null);
+        $location.search('template_group', $scope.template_group || null);
+        $scope.animate();
+        var from = moment.utc($scope.fromDate + ' ' + $scope.fromTime);
+        var to = moment.utc($scope.toDate + ' ' + $scope.toTime);
+        if (!from.isValid()) {
+            from = to;
+        }
+        if (!to.isValid()) {
+            to = from;
+        }
+        if (!from.isValid() && !to.isValid()) {
+            from = to = moment.utc();
+        }
+        var diff = from.diff(to);
+        var intervals;
+        if (diff == 0) {
+            intervals = 1;
+        }
+        else if (Math.abs(diff) < 60 * 1000) {
+            intervals = 2;
+        }
+        else {
+            intervals = +$scope.intervals;
+        }
+        var url = '/api/rule?' + 'alert=' + encodeURIComponent($scope.selected_alert) + '&from=' + encodeURIComponent(from.format()) + '&to=' + encodeURIComponent(to.format()) + '&intervals=' + encodeURIComponent(intervals) + '&email=' + encodeURIComponent($scope.email) + '&template_group=' + encodeURIComponent($scope.template_group);
+        $http.post(url, $scope.config_text).success(function (data) {
+            $scope.sets = data.Sets;
+            $scope.alert_history = data.AlertHistory;
+            procResults(data);
+        }).error(function (error) {
+            $scope.error = error;
+        }).finally(function () {
+            $scope.running = false;
+            $scope.stop();
+        });
+    };
+    $scope.zws = function (v) {
+        return v.replace(/([,{}()])/g, '$1\u200b');
+    };
+    function procResults(data) {
+        $scope.subject = data.Subject;
+        $scope.body = $sce.trustAsHtml(data.Body);
+        $scope.data = JSON.stringify(data.Data, null, '  ');
+        $scope.error = data.Errors;
+        $scope.warning = data.Warnings;
+    }
+    return $scope;
 }]);
 bosunControllers.controller('SilenceCtrl', ['$scope', '$http', '$location', '$route', function ($scope, $http, $location, $route) {
     var search = $location.search();
